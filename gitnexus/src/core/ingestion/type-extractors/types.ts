@@ -61,6 +61,11 @@ export type PatternBindingExtractor = (
 
 /** Per-language type extraction configuration */
 export interface LanguageTypeConfig {
+  /** Allow pattern binding to overwrite existing scopeEnv entries.
+   *  WARNING: Enables function-scope type pollution. Only for languages with
+   *  smart-cast semantics (e.g., Kotlin `when/is`) where the subject variable
+   *  already exists in scopeEnv from its declaration. */
+  readonly allowPatternBindingOverwrite?: boolean;
   /** Node types that represent typed declarations for this language */
   declarationNodeTypes: ReadonlySet<string>;
   /** AST node types for for-each/for-in statements with explicit element types. */

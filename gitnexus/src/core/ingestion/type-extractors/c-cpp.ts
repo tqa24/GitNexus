@@ -210,7 +210,8 @@ const extractCppTemplateTypeArgs = (templateTypeNode: SyntaxNode): string[] => {
 /** Extract element type from a C++ type annotation AST node.
  *  Handles: template_type (vector<User>, map<string, User>),
  *  pointer/reference types (User*, User&). */
-const extractCppElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArgPosition = 'last'): string | undefined => {
+const extractCppElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArgPosition = 'last', depth = 0): string | undefined => {
+  if (depth > 50) return undefined;
   // template_type: vector<User>, map<string, User> — extract type arg based on position
   if (typeNode.type === 'template_type') {
     const args = extractCppTemplateTypeArgs(typeNode);
@@ -220,12 +221,12 @@ const extractCppElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArgPos
   if (typeNode.type === 'reference_type' || typeNode.type === 'pointer_type'
     || typeNode.type === 'type_descriptor') {
     const inner = typeNode.lastNamedChild;
-    if (inner) return extractCppElementTypeFromTypeNode(inner, pos);
+    if (inner) return extractCppElementTypeFromTypeNode(inner, pos, depth + 1);
   }
   // qualified/scoped types: std::vector<User> → unwrap to template_type child
   if (typeNode.type === 'qualified_identifier' || typeNode.type === 'scoped_type_identifier') {
     const inner = typeNode.lastNamedChild;
-    if (inner) return extractCppElementTypeFromTypeNode(inner, pos);
+    if (inner) return extractCppElementTypeFromTypeNode(inner, pos, depth + 1);
   }
   return undefined;
 };
@@ -283,7 +284,23 @@ const extractForLoopBinding: ForLoopExtractor = (
   if (nameNode.type === 'reference_declarator' || nameNode.type === 'pointer_declarator') {
     nameNode = nameNode.firstNamedChild ?? nameNode;
   }
-  const varName = extractVarName(nameNode);
+
+  // Handle structured bindings: auto& [key, value] or auto [key, value]
+  // Bind the last identifier (value heuristic for [key, value] patterns)
+  let loopVarName: string | undefined;
+  if (nameNode.type === 'structured_binding_declarator') {
+    const lastChild = nameNode.lastNamedChild;
+    if (lastChild?.type === 'identifier') {
+      loopVarName = lastChild.text;
+    }
+  } else if (declaratorNode.type === 'structured_binding_declarator') {
+    const lastChild = declaratorNode.lastNamedChild;
+    if (lastChild?.type === 'identifier') {
+      loopVarName = lastChild.text;
+    }
+  }
+
+  const varName = loopVarName ?? extractVarName(nameNode);
   if (!varName) return;
 
   // Check if the type is auto/placeholder — if not, use the explicit type directly
@@ -305,6 +322,9 @@ const extractForLoopBinding: ForLoopExtractor = (
   let methodName: string | undefined;
   if (rightNode.type === 'identifier') {
     iterableName = rightNode.text;
+  } else if (rightNode.type === 'field_expression') {
+    const prop = rightNode.lastNamedChild;
+    if (prop) iterableName = prop.text;
   } else if (rightNode.type === 'call_expression') {
     // users.begin() is NOT used in range-for, but container.items() etc. might be
     const fieldExpr = rightNode.childForFieldName('function');

@@ -714,3 +714,57 @@ describe('C++ chained method call resolution', () => {
     expect(repoSave).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// C++ structured binding in range-for: for (auto& [key, user] : userMap)
+// ---------------------------------------------------------------------------
+
+describe('C++ structured binding in range-for', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'cpp-structured-binding'),
+      () => {},
+    );
+  }, 60000);
+
+  it('detects User and Repo classes with save methods', () => {
+    expect(getNodesByLabel(result, 'Class')).toContain('User');
+    expect(getNodesByLabel(result, 'Class')).toContain('Repo');
+    const saveMethods = getNodesByLabel(result, 'Method').filter(m => m === 'save');
+    expect(saveMethods.length).toBe(2);
+  });
+
+  it('resolves user.save() in structured binding for-loop to User#save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processUserMap' && c.targetFilePath?.includes('User.h'),
+    );
+    expect(userSave).toBeDefined();
+  });
+
+  it('resolves repo.save() in structured binding for-loop to Repo#save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const repoSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processRepoMap' && c.targetFilePath?.includes('Repo.h'),
+    );
+    expect(repoSave).toBeDefined();
+  });
+
+  it('does NOT cross-resolve user.save() to Repo#save (negative)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wrongSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processUserMap' && c.targetFilePath?.includes('Repo.h'),
+    );
+    expect(wrongSave).toBeUndefined();
+  });
+
+  it('does NOT cross-resolve repo.save() to User#save (negative)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wrongSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processRepoMap' && c.targetFilePath?.includes('User.h'),
+    );
+    expect(wrongSave).toBeUndefined();
+  });
+});

@@ -155,6 +155,9 @@ const extractJavaForLoopBinding: ForLoopExtractor = (
   let methodName: string | undefined;
   if (iterableNode.type === 'identifier') {
     iterableName = iterableNode.text;
+  } else if (iterableNode.type === 'field_access') {
+    const field = iterableNode.childForFieldName('field');
+    if (field) iterableName = field.text;
   } else if (iterableNode.type === 'method_invocation') {
     // data.keySet() → method_invocation > object: identifier + name: identifier
     const obj = iterableNode.childForFieldName('object');
@@ -205,6 +208,19 @@ const extractJavaPendingAssignment: PendingAssignmentExtractor = (node, scopeEnv
  * declares the new type, so no scopeEnv lookup is needed.
  */
 const extractJavaPatternBinding: PatternBindingExtractor = (node) => {
+  if (node.type === 'type_pattern') {
+    // Java 17+ switch pattern: case User u -> ...
+    // type_pattern has positional children (NO named fields):
+    //   namedChild(0) = type (type_identifier, e.g., User)
+    //   namedChild(1) = identifier (e.g., u)
+    const typeNode = node.namedChild(0);
+    const nameNode = node.namedChild(1);
+    if (!typeNode || !nameNode) return undefined;
+    const typeName = extractSimpleTypeName(typeNode);
+    const varName = extractVarName(nameNode);
+    if (!typeName || !varName) return undefined;
+    return { varName, typeName };
+  }
   if (node.type !== 'instanceof_expression') return undefined;
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return undefined;
@@ -219,7 +235,7 @@ const extractJavaPatternBinding: PatternBindingExtractor = (node) => {
 export const javaTypeConfig: LanguageTypeConfig = {
   declarationNodeTypes: JAVA_DECLARATION_NODE_TYPES,
   forLoopNodeTypes: JAVA_FOR_LOOP_NODE_TYPES,
-  patternBindingNodeTypes: new Set(['instanceof_expression']),
+  patternBindingNodeTypes: new Set(['instanceof_expression', 'type_pattern']),
   extractDeclaration: extractJavaDeclaration,
   extractParameter: extractJavaParameter,
   extractInitializer: extractJavaInitializer,
@@ -440,11 +456,17 @@ const extractKotlinForLoopBinding: ForLoopExtractor = (
     if (child.type === 'navigation_expression') {
       // data.keys → navigation_expression > simple_identifier(data) + navigation_suffix > simple_identifier(keys)
       const obj = child.firstNamedChild;
-      if (obj?.type === 'simple_identifier') iterableName = obj.text;
       const suffix = findChildByType(child, 'navigation_suffix');
-      if (suffix) {
-        const prop = findChildByType(suffix, 'simple_identifier');
+      const prop = suffix ? findChildByType(suffix, 'simple_identifier') : null;
+      // If the suffix has a call_suffix, it's a method call on a container (e.g., data.keys()).
+      // Otherwise it's a bare property access (e.g., self.users) — use the property as iterableName.
+      const hasCallSuffix = suffix ? findChildByType(suffix, 'call_suffix') !== null : false;
+      if (hasCallSuffix || !prop) {
+        if (obj?.type === 'simple_identifier') iterableName = obj.text;
         if (prop) methodName = prop.text;
+      } else {
+        // Bare property access: self.users, repo.users → use property as iterable name
+        iterableName = prop.text;
       }
       break;
     }
@@ -526,13 +548,42 @@ const extractKotlinPendingAssignment: PendingAssignmentExtractor = (node, scopeE
   return undefined;
 };
 
+/** Walk up from a node to find an ancestor of a given type. */
+const findAncestorByType = (node: SyntaxNode, type: string): SyntaxNode | undefined => {
+  let current = node.parent;
+  while (current) {
+    if (current.type === type) return current;
+    current = current.parent;
+  }
+  return undefined;
+};
+
+const extractKotlinPatternBinding: PatternBindingExtractor = (node) => {
+  if (node.type !== 'type_test') return undefined;
+  const typeNode = node.lastNamedChild;
+  if (!typeNode) return undefined;
+  const typeName = extractSimpleTypeName(typeNode);
+  if (!typeName) return undefined;
+  const whenExpr = findAncestorByType(node, 'when_expression');
+  if (!whenExpr) return undefined;
+  const whenSubject = whenExpr.namedChild(0);
+  const subject = whenSubject?.firstNamedChild ?? whenSubject;
+  if (!subject) return undefined;
+  const varName = extractVarName(subject);
+  if (!varName) return undefined;
+  return { varName, typeName };
+};
+
 export const kotlinTypeConfig: LanguageTypeConfig = {
+  allowPatternBindingOverwrite: true,
   declarationNodeTypes: KOTLIN_DECLARATION_NODE_TYPES,
   forLoopNodeTypes: KOTLIN_FOR_LOOP_NODE_TYPES,
+  patternBindingNodeTypes: new Set(['type_test']),
   extractDeclaration: extractKotlinDeclaration,
   extractParameter: extractKotlinParameter,
   extractInitializer: extractKotlinInitializer,
   scanConstructorBinding: scanKotlinConstructorBinding,
   extractForLoopBinding: extractKotlinForLoopBinding,
   extractPendingAssignment: extractKotlinPendingAssignment,
+  extractPatternBinding: extractKotlinPatternBinding,
 };

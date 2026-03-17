@@ -35,7 +35,8 @@ const extractStructPatternType = (structPattern: SyntaxNode): string | undefined
  * Recursively scan a pattern tree for captured_pattern nodes (x @ StructType { .. })
  * and extract variable → type bindings from them.
  */
-const extractCapturedPatternBindings = (pattern: SyntaxNode, env: Map<string, string>): void => {
+const extractCapturedPatternBindings = (pattern: SyntaxNode, env: Map<string, string>, depth = 0): void => {
+  if (depth > 50) return;
   if (pattern.type === 'captured_pattern') {
     // captured_pattern: identifier @ inner_pattern
     // The first named child is the identifier, followed by the inner pattern.
@@ -57,7 +58,7 @@ const extractCapturedPatternBindings = (pattern: SyntaxNode, env: Map<string, st
   if (pattern.type === 'tuple_struct_pattern') {
     for (let i = 0; i < pattern.namedChildCount; i++) {
       const child = pattern.namedChild(i);
-      if (child) extractCapturedPatternBindings(child, env);
+      if (child) extractCapturedPatternBindings(child, env, depth + 1);
     }
   }
 };
@@ -291,7 +292,8 @@ const FOR_LOOP_NODE_TYPES: ReadonlySet<string> = new Set(['for_expression']);
 /** Extract element type from a Rust type annotation AST node.
  *  Handles: generic_type (Vec<User>), reference_type (&[User]), array_type ([User; N]),
  *  slice_type ([User]). For call-graph purposes, strips references (&User → User). */
-const extractRustElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArgPosition = 'last'): string | undefined => {
+const extractRustElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArgPosition = 'last', depth = 0): string | undefined => {
+  if (depth > 50) return undefined;
   // generic_type: Vec<User>, HashMap<K, V> — extract type arg based on position
   if (typeNode.type === 'generic_type') {
     const args = extractGenericTypeArgs(typeNode);
@@ -300,7 +302,7 @@ const extractRustElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArgPo
   // reference_type: &[User] or &Vec<User> — unwrap the reference and recurse
   if (typeNode.type === 'reference_type') {
     const inner = typeNode.lastNamedChild;
-    if (inner) return extractRustElementTypeFromTypeNode(inner, pos);
+    if (inner) return extractRustElementTypeFromTypeNode(inner, pos, depth + 1);
   }
   // array_type: [User; N] — element is the first child
   if (typeNode.type === 'array_type') {
@@ -370,6 +372,9 @@ const extractForLoopBinding: ForLoopExtractor = (
     if (inner?.type === 'identifier') iterableName = inner.text;
   } else if (valueNode.type === 'identifier') {
     iterableName = valueNode.text;
+  } else if (valueNode.type === 'field_expression') {
+    const prop = valueNode.lastNamedChild;
+    if (prop) iterableName = prop.text;
   } else if (valueNode.type === 'call_expression') {
     // users.iter() → call_expression > function: field_expression > identifier + field_identifier
     const fieldExpr = valueNode.childForFieldName('function');

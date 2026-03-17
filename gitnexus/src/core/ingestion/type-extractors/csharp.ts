@@ -2,6 +2,9 @@ import type { SyntaxNode } from '../utils.js';
 import type { ConstructorBindingScanner, ForLoopExtractor, LanguageTypeConfig, ParameterExtractor, TypeBindingExtractor, PendingAssignmentExtractor, PatternBindingExtractor } from './types.js';
 import { extractSimpleTypeName, extractVarName, findChildByType, unwrapAwait, extractGenericTypeArgs, resolveIterableElementType, methodToTypeArgPosition, type TypeArgPosition } from './shared.js';
 
+/** Known container property accessors that operate on the container itself (e.g., dict.Keys, dict.Values) */
+const KNOWN_CONTAINER_PROPS: ReadonlySet<string> = new Set(['Keys', 'Values']);
+
 const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set([
   'local_declaration_statement',
   'variable_declaration',
@@ -134,7 +137,8 @@ const FOR_LOOP_NODE_TYPES: ReadonlySet<string> = new Set([
 /** Extract element type from a C# type annotation AST node.
  *  Handles generic_name (List<User>), array_type (User[]), nullable_type (?).
  *  `pos` selects which type arg: 'first' for keys, 'last' for values (default). */
-const extractCSharpElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArgPosition = 'last'): string | undefined => {
+const extractCSharpElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArgPosition = 'last', depth = 0): string | undefined => {
+  if (depth > 50) return undefined;
   // generic_name: List<User>, IEnumerable<User>, Dictionary<string, User>
   // C# uses generic_name (not generic_type)
   if (typeNode.type === 'generic_name') {
@@ -157,7 +161,7 @@ const extractCSharpElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArg
   // nullable_type: unwrap and recurse (List<User>? → List<User> → User)
   if (typeNode.type === 'nullable_type') {
     const inner = typeNode.firstNamedChild;
-    if (inner) return extractCSharpElementTypeFromTypeNode(inner, pos);
+    if (inner) return extractCSharpElementTypeFromTypeNode(inner, pos, depth + 1);
   }
   return undefined;
 };
@@ -215,10 +219,17 @@ const extractForLoopBinding: ForLoopExtractor = (
     iterableName = rightNode.text;
   } else if (rightNode?.type === 'member_access_expression') {
     // C# property access: data.Keys, data.Values → member_access_expression
+    // Also handles bare member access: this.users, repo.users → use property as iterableName
     const obj = rightNode.childForFieldName('expression');
     const prop = rightNode.childForFieldName('name');
-    if (obj?.type === 'identifier') iterableName = obj.text;
-    if (prop?.type === 'identifier') methodName = prop.text;
+    const propText = prop?.type === 'identifier' ? prop.text : undefined;
+    if (propText && KNOWN_CONTAINER_PROPS.has(propText)) {
+      if (obj?.type === 'identifier') iterableName = obj.text;
+      methodName = propText;
+    } else if (propText) {
+      // Bare member access: this.users → use property name for scopeEnv lookup
+      iterableName = propText;
+    }
   } else if (rightNode?.type === 'invocation_expression') {
     // C# method call: data.Select(...) → invocation_expression > member_access_expression
     const fn = rightNode.firstNamedChild;

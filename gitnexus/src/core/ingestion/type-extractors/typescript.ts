@@ -208,7 +208,8 @@ const TS_FUNCTION_NODE_TYPES = new Set([
  *   type_annotation ": Array<User>"  →  generic_type → extractGenericTypeArgs → "User"
  * Falls back to text-based extraction via extractElementTypeFromString.
  */
-const extractTsElementTypeFromAnnotation = (typeAnnotation: SyntaxNode, pos: TypeArgPosition = 'last'): string | undefined => {
+const extractTsElementTypeFromAnnotation = (typeAnnotation: SyntaxNode, pos: TypeArgPosition = 'last', depth = 0): string | undefined => {
+  if (depth > 50) return undefined;
   // Unwrap type_annotation (the node text includes ': ' prefix)
   const inner = typeAnnotation.type === 'type_annotation'
     ? (typeAnnotation.firstNamedChild ?? typeAnnotation)
@@ -217,7 +218,7 @@ const extractTsElementTypeFromAnnotation = (typeAnnotation: SyntaxNode, pos: Typ
   // readonly User[] — readonly_type wraps array_type: unwrap and recurse
   if (inner.type === 'readonly_type') {
     const wrapped = inner.firstNamedChild;
-    if (wrapped) return extractTsElementTypeFromAnnotation(wrapped, pos);
+    if (wrapped) return extractTsElementTypeFromAnnotation(wrapped, pos, depth + 1);
   }
 
   // User[] — array_type: first named child is the element type
@@ -344,6 +345,9 @@ const extractForLoopBinding: ForLoopExtractor = (
   let methodName: string | undefined;
   if (rightNode?.type === 'identifier') {
     iterableName = rightNode.text;
+  } else if (rightNode?.type === 'member_expression') {
+    const prop = rightNode.childForFieldName('property');
+    if (prop) iterableName = prop.text;
   } else if (rightNode?.type === 'call_expression') {
     // entries.values() → call_expression > function: member_expression > object + property
     const fn = rightNode.childForFieldName('function');
@@ -378,6 +382,13 @@ const extractForLoopBinding: ForLoopExtractor = (
     if (lastChild?.type === 'identifier') {
       scopeEnv.set(lastChild.text, elementType);
     }
+    return;
+  }
+
+  if (leftNode.type === 'object_pattern') {
+    // Object destructuring (e.g., `for (const { id } of users)`) destructures
+    // into fields of the element type. Without field-level resolution, we cannot
+    // bind individual properties to their correct types. Skip to avoid false bindings.
     return;
   }
 

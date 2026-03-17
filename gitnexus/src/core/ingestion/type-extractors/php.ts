@@ -61,6 +61,9 @@ const normalizePhpType = (raw: string): string | undefined => {
   type = segments[segments.length - 1];
   // Skip uninformative types
   if (type === 'mixed' || type === 'void' || type === 'self' || type === 'static' || type === 'object') return undefined;
+  // Strip generic suffix: Collection<User> → Collection (allows container descriptor lookup)
+  const genericMatch = type.match(/^(\w+)\s*</);
+  if (genericMatch) return genericMatch[1];
   if (/^\w+$/.test(type)) return type;
   return undefined;
 };
@@ -352,13 +355,20 @@ const extractForLoopBinding: ForLoopExtractor = (
   if (!varName) return;
 
   // Get iterable variable name (PHP vars include $ prefix)
-  const iterableName = iterableNode.type === 'variable_name' ? iterableNode.text : undefined;
+  let iterableName: string | undefined;
+  if (iterableNode.type === 'variable_name') {
+    iterableName = iterableNode.text;
+  } else if (iterableNode?.type === 'member_access_expression') {
+    const name = iterableNode.childForFieldName('name');
+    if (name) iterableName = name.text;
+  }
   if (!iterableName) return;
 
   // Strategy A: try resolveIterableElementType (handles constructor-binding container types)
   const elementType = resolveIterableElementType(
     iterableName, node, scopeEnv, declarationTypeNodes, scope,
     extractPhpElementTypeFromTypeNode, findPhpParamElementType,
+    undefined,
   );
   if (elementType) {
     scopeEnv.set(varName, elementType);

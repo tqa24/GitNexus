@@ -739,7 +739,6 @@ export const processCallsFromExtracted = async (
     if (!list) { list = []; byFile.set(call.filePath, list); }
     list.push(call);
   }
-
   const totalFiles = byFile.size;
   let filesProcessed = 0;
 

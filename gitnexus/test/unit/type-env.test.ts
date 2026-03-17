@@ -3107,6 +3107,81 @@ function process(cache: MyCache<string, User>) {
     });
   });
 
+  describe('for-loop Phase 2 enhancements', () => {
+    it('TS object destructuring skip: for (const { id, name } of users) — no binding produced', () => {
+      const tree = parse(`
+function process(users: User[]) {
+  for (const { id, name } of users) {
+    console.log(id, name);
+  }
+}
+      `, TypeScript.typescript);
+      const { env } = buildTypeEnv(tree, 'typescript');
+      // Object destructuring should NOT produce bindings — field types are unknown
+      expect(flatGet(env, 'id')).toBeUndefined();
+      expect(flatGet(env, 'name')).toBeUndefined();
+    });
+
+    it('TS member access: for (const user of this.users) with users: User[] param — resolves', () => {
+      const tree = parse(`
+function process(users: User[]) {
+  for (const user of this.users) {
+    user.save();
+  }
+}
+      `, TypeScript.typescript);
+      const { env } = buildTypeEnv(tree, 'typescript');
+      expect(flatGet(env, 'user')).toBe('User');
+    });
+
+    it('Python member access: for user in self.users with users: List[User] param — resolves', () => {
+      const tree = parse(`
+def process(users: List[User]):
+    for user in self.users:
+        user.save()
+      `, Python);
+      const { env } = buildTypeEnv(tree, 'python');
+      expect(flatGet(env, 'user')).toBe('User');
+    });
+
+    it('C++ structured bindings: for (auto& [key, value] : map) with map<string, User> param — binds value', () => {
+      const tree = parse(`
+void process(std::map<std::string, User>& map) {
+  for (auto& [key, value] : map) {
+    value.save();
+  }
+}
+      `, CPP);
+      const { env } = buildTypeEnv(tree, 'cpp');
+      expect(flatGet(env, 'value')).toBe('User');
+    });
+
+    it('C++ structured bindings: exact App.cpp fixture — binds user and repo', () => {
+      const tree = parse(`
+#include "User.h"
+#include "Repo.h"
+#include <map>
+#include <string>
+#include <vector>
+
+void processUserMap(std::map<std::string, User> userMap) {
+    for (auto& [key, user] : userMap) {
+        user.save();
+    }
+}
+
+void processRepoMap(std::map<std::string, Repo> repoMap) {
+    for (const auto& [key, repo] : repoMap) {
+        repo.save();
+    }
+}
+      `, CPP);
+      const { env } = buildTypeEnv(tree, 'cpp');
+      expect(flatGet(env, 'user')).toBe('User');
+      expect(flatGet(env, 'repo')).toBe('Repo');
+    });
+  });
+
   describe('known limitations (documented skip tests)', () => {
     it.skip('Ruby block parameter: users.each { |user| } — closure param inference, different feature', () => {
       // Not a for-loop; .each { |user| } is a method call with a block.
@@ -3118,6 +3193,110 @@ def process(users)
 end
       `, Ruby);
       const { env } = buildTypeEnv(tree, 'ruby');
+      expect(flatGet(env, 'user')).toBe('User');
+    });
+  });
+
+  describe('Kotlin when/is pattern binding (Phase 6)', () => {
+    it('when (x) { is User -> } binds x to User', () => {
+      const tree = parse(`
+fun process(x: Any) {
+    when (x) {
+        is User -> x.name
+    }
+}
+      `, Kotlin);
+      const { env } = buildTypeEnv(tree, 'kotlin');
+      expect(flatGet(env, 'x')).toBe('User');
+    });
+
+    it('when (x) { is User -> ...; is Admin -> ... } — last arm overwrites (allowPatternBindingOverwrite)', () => {
+      const tree = parse(`
+fun process(x: Any) {
+    when (x) {
+        is User -> x.name
+        is Admin -> x.role
+    }
+}
+      `, Kotlin);
+      const { env } = buildTypeEnv(tree, 'kotlin');
+      // allowPatternBindingOverwrite means each arm overwrites — last one wins
+      expect(flatGet(env, 'x')).toBe('Admin');
+    });
+
+    it('when (x) { else -> } — no type check, no pattern binding produced', () => {
+      const tree = parse(`
+fun process() {
+    val x: String = ""
+    when (x) {
+        else -> println(x)
+    }
+}
+      `, Kotlin);
+      const { env } = buildTypeEnv(tree, 'kotlin');
+      // x has type String from its declaration — no pattern binding should narrow it
+      // (else branch has no type_test node, so extractKotlinPatternBinding never fires)
+      expect(flatGet(env, 'x')).toBe('String');
+    });
+  });
+
+  describe('Java switch pattern variable (Phase 6)', () => {
+    it('switch (obj) { case User u -> } binds u to User', () => {
+      const tree = parse(`
+class App {
+    void process(Object obj) {
+        switch (obj) {
+            case User u -> u.save();
+        }
+    }
+}
+      `, Java);
+      const { env } = buildTypeEnv(tree, 'java');
+      expect(flatGet(env, 'u')).toBe('User');
+    });
+
+    it('switch (obj) { case User u -> ...; case Admin a -> ... } — both bind', () => {
+      const tree = parse(`
+class App {
+    void process(Object obj) {
+        switch (obj) {
+            case User u -> u.save();
+            case Admin a -> a.manage();
+        }
+    }
+}
+      `, Java);
+      const { env } = buildTypeEnv(tree, 'java');
+      expect(flatGet(env, 'u')).toBe('User');
+      expect(flatGet(env, 'a')).toBe('Admin');
+    });
+
+    it('switch (x) { case 42 -> ... } — no pattern variable, no binding', () => {
+      const tree = parse(`
+class App {
+    void process(Object x) {
+        switch (x) {
+            case 42 -> System.out.println("answer");
+        }
+    }
+}
+      `, Java);
+      const { env } = buildTypeEnv(tree, 'java');
+      // Only the parameter x:Object should exist, no extra bindings from case 42
+      expect(flatGet(env, 'x')).toBe('Object');
+    });
+
+    it('obj instanceof User user — regression: still works after type_pattern addition', () => {
+      const tree = parse(`
+class App {
+    void process(Object obj) {
+        if (obj instanceof User user) {
+            user.save();
+        }
+    }
+}
+      `, Java);
+      const { env } = buildTypeEnv(tree, 'java');
       expect(flatGet(env, 'user')).toBe('User');
     });
   });
@@ -3138,4 +3317,5 @@ fn process(opt: Option<User>) {
       expect(flatGet(env, 'user')).toBe('User');
     });
   });
+
 });

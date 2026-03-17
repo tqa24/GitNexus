@@ -358,11 +358,11 @@ export const buildTypeEnv = (
         }
       }
       // Run the language-specific declaration extractor (may or may not add to scopeEnv).
-      const keysBefore = new Set(scopeEnv.keys());
+      const keysBefore = typeNode ? new Set(scopeEnv.keys()) : undefined;
       config.extractDeclaration(node, scopeEnv);
       // Fallback: for multi-declarator languages (TS, C#, Java) where the type field
       // is on variable_declarator children, capture via keysBefore/keysAfter diff.
-      if (typeNode) {
+      if (typeNode && keysBefore) {
         for (const varName of scopeEnv.keys()) {
           if (!keysBefore.has(varName) && !declarationTypeNodes.has(`${scope}\0${varName}`)) {
             declarationTypeNodes.set(`${scope}\0${varName}`, typeNode);
@@ -409,7 +409,8 @@ export const buildTypeEnv = (
     // Conservative: extractor returns undefined when source type is unknown.
     if (config.extractPatternBinding && (!config.patternBindingNodeTypes || config.patternBindingNodeTypes.has(node.type))) {
       const patternBinding = config.extractPatternBinding(node, scopeEnv, declarationTypeNodes, scope);
-      if (patternBinding && !scopeEnv.has(patternBinding.varName)) {
+      // Allow overwrite for languages with smart-cast narrowing (e.g., Kotlin when)
+      if (patternBinding && (!scopeEnv.has(patternBinding.varName) || config.allowPatternBindingOverwrite)) {
         scopeEnv.set(patternBinding.varName, patternBinding.typeName);
       }
     }

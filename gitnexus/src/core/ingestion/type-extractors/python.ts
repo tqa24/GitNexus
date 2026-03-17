@@ -243,6 +243,9 @@ const extractForLoopBinding: ForLoopExtractor = (
   let methodName: string | undefined;
   if (rightNode?.type === 'identifier') {
     iterableName = rightNode.text;
+  } else if (rightNode?.type === 'attribute') {
+    const prop = rightNode.lastNamedChild;
+    if (prop) iterableName = prop.text;
   } else if (rightNode?.type === 'call') {
     // data.items() → call > function: attribute > identifier('data') + identifier('items')
     const fn = rightNode.childForFieldName('function');

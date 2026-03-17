@@ -920,6 +920,60 @@ describe('Java enum static method call resolution (Phase 5 review fix)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Java 21+ switch pattern matching: switch (obj) { case User user -> user.save(); }
+// ---------------------------------------------------------------------------
+
+describe('Java switch pattern binding', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'java-switch-pattern'),
+      () => {},
+    );
+  }, 60000);
+
+  it('detects User and Repo classes, both with save methods', () => {
+    expect(getNodesByLabel(result, 'Class')).toContain('User');
+    expect(getNodesByLabel(result, 'Class')).toContain('Repo');
+    const saveMethods = getNodesByLabel(result, 'Method').filter(m => m === 'save');
+    expect(saveMethods.length).toBe(2);
+  });
+
+  it('resolves user.save() in switch case User to models/User.java', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processAny' && c.targetFilePath === 'models/User.java',
+    );
+    expect(userSave).toBeDefined();
+  });
+
+  it('resolves repo.save() in switch case Repo to models/Repo.java', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const repoSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processAny' && c.targetFilePath === 'models/Repo.java',
+    );
+    expect(repoSave).toBeDefined();
+  });
+
+  it('resolves user.save() in handleUser switch case User to models/User.java', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userSave = calls.find(c =>
+      c.target === 'save' && c.source === 'handleUser' && c.targetFilePath === 'models/User.java',
+    );
+    expect(userSave).toBeDefined();
+  });
+
+  it('does NOT cross-resolve handleUser switch case User to Repo.save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wrongSave = calls.find(c =>
+      c.target === 'save' && c.source === 'handleUser' && c.targetFilePath === 'models/Repo.java',
+    );
+    expect(wrongSave).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Java Map .values() for-loop — method-aware type arg resolution
 // ---------------------------------------------------------------------------
 

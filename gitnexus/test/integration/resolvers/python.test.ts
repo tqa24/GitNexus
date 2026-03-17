@@ -1091,3 +1091,49 @@ describe('Python dict.items() for-loop resolution', () => {
     expect(wrongSave).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// self.users member access iterable: for user in self.users
+// ---------------------------------------------------------------------------
+
+describe('Python member access iterable for-loop', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-member-access-for-loop'),
+      () => {},
+    );
+  }, 60000);
+
+  it('detects User and Repo classes with save methods', () => {
+    expect(getNodesByLabel(result, 'Class')).toContain('User');
+    expect(getNodesByLabel(result, 'Class')).toContain('Repo');
+    // Python tree-sitter captures all function_definitions as Function, including methods
+    expect(getNodesByLabel(result, 'Function')).toContain('save');
+  });
+
+  it('resolves user.save() via self.users to User#save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userSave = calls.find(c =>
+      c.target === 'save' && c.source === 'process_users' && c.targetFilePath?.includes('user.py'),
+    );
+    expect(userSave).toBeDefined();
+  });
+
+  it('does NOT cross-resolve user.save() to Repo#save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wrong = calls.find(c =>
+      c.target === 'save' && c.source === 'process_users' && c.targetFilePath?.includes('repo.py'),
+    );
+    expect(wrong).toBeUndefined();
+  });
+
+  it('resolves repo.save() via self.repos to Repo#save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const repoSave = calls.find(c =>
+      c.target === 'save' && c.source === 'process_repos' && c.targetFilePath?.includes('repo.py'),
+    );
+    expect(repoSave).toBeDefined();
+  });
+});

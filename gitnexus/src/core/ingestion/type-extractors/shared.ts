@@ -169,7 +169,8 @@ const NULLABLE_WRAPPER_TYPES = new Set([
  * (e.g., models.User → User), and nullable types (e.g., User? → User).
  * Returns undefined for complex types (unions, intersections, function types).
  */
-export const extractSimpleTypeName = (typeNode: SyntaxNode): string | undefined => {
+export const extractSimpleTypeName = (typeNode: SyntaxNode, depth = 0): string | undefined => {
+  if (depth > 50 || typeNode.text.length > 2048) return undefined;
   // Direct type identifier (includes Ruby 'constant' for class names)
   if (typeNode.type === 'type_identifier' || typeNode.type === 'identifier'
     || typeNode.type === 'simple_identifier' || typeNode.type === 'constant') {
@@ -200,7 +201,7 @@ export const extractSimpleTypeName = (typeNode: SyntaxNode): string | undefined 
       ?? typeNode.childForFieldName('type')
       ?? typeNode.firstNamedChild;
     if (!base) return undefined;
-    const baseName = extractSimpleTypeName(base);
+    const baseName = extractSimpleTypeName(base, depth + 1);
     // Unwrap known nullable wrappers: Optional<User> → User, Option<User> → User
     if (baseName && NULLABLE_WRAPPER_TYPES.has(baseName)) {
       const args = extractGenericTypeArgs(typeNode);
@@ -212,7 +213,7 @@ export const extractSimpleTypeName = (typeNode: SyntaxNode): string | undefined 
   // Nullable types (Kotlin User?, C# User?)
   if (typeNode.type === 'nullable_type') {
     const inner = typeNode.firstNamedChild;
-    if (inner) return extractSimpleTypeName(inner);
+    if (inner) return extractSimpleTypeName(inner, depth + 1);
   }
 
   // Nullable union types (TS/JS: User | null, User | undefined, User | null | undefined)
@@ -229,7 +230,7 @@ export const extractSimpleTypeName = (typeNode: SyntaxNode): string | undefined 
     }
     // Only unwrap if exactly one meaningful type remains
     if (nonNullTypes.length === 1) {
-      return extractSimpleTypeName(nonNullTypes[0]);
+      return extractSimpleTypeName(nonNullTypes[0], depth + 1);
     }
   }
 
@@ -237,13 +238,13 @@ export const extractSimpleTypeName = (typeNode: SyntaxNode): string | undefined 
   if (typeNode.type === 'type_annotation' || typeNode.type === 'type'
     || typeNode.type === 'user_type') {
     const inner = typeNode.firstNamedChild;
-    if (inner) return extractSimpleTypeName(inner);
+    if (inner) return extractSimpleTypeName(inner, depth + 1);
   }
 
   // Pointer/reference types (C++, Rust): User*, &User, &mut User
   if (typeNode.type === 'pointer_type' || typeNode.type === 'reference_type') {
     const inner = typeNode.firstNamedChild;
-    if (inner) return extractSimpleTypeName(inner);
+    if (inner) return extractSimpleTypeName(inner, depth + 1);
   }
 
   // Primitive/predefined types: string, int, float, bool, number, unknown, any
@@ -255,7 +256,7 @@ export const extractSimpleTypeName = (typeNode: SyntaxNode): string | undefined 
   // PHP named_type / optional_type
   if (typeNode.type === 'named_type' || typeNode.type === 'optional_type') {
     const inner = typeNode.childForFieldName('name') ?? typeNode.firstNamedChild;
-    if (inner) return extractSimpleTypeName(inner);
+    if (inner) return extractSimpleTypeName(inner, depth + 1);
   }
 
   // Name node (PHP)
@@ -299,6 +300,7 @@ export const TYPED_PARAMETER_TYPES = new Set([
   'parameter_declaration',   // C/C++ void f(Type name)
   'simple_parameter',        // PHP function(Foo $x)
   'property_promotion_parameter', // PHP 8.0+ constructor promotion: __construct(private Foo $x)
+  'closure_parameter',       // Rust: |user: User| — typed closure parameters
 ]);
 
 /**
@@ -319,13 +321,14 @@ export const TYPED_PARAMETER_TYPES = new Set([
  *   returns [] for non-generic types).
  * @returns Array of resolved type argument names. Unresolvable arguments are omitted.
  */
-export const extractGenericTypeArgs = (typeNode: SyntaxNode): string[] => {
+export const extractGenericTypeArgs = (typeNode: SyntaxNode, depth = 0): string[] => {
+  if (depth > 50) return [];
   // Unwrap wrapper nodes that may sit above the generic_type
   if (typeNode.type === 'type_annotation' || typeNode.type === 'type'
     || typeNode.type === 'user_type' || typeNode.type === 'nullable_type'
     || typeNode.type === 'optional_type') {
     const inner = typeNode.firstNamedChild;
-    if (inner) return extractGenericTypeArgs(inner);
+    if (inner) return extractGenericTypeArgs(inner, depth + 1);
     return [];
   }
 

@@ -360,8 +360,14 @@ const extractForLoopBinding: ForLoopExtractor = (
   const inNode = node.childForFieldName('value');
   if (!inNode) return;
   const iterableNode = inNode.firstNamedChild;
-  if (!iterableNode || iterableNode.type !== 'identifier') return;
-  const iterableName = iterableNode.text;
+  let iterableName: string | undefined;
+  if (iterableNode?.type === 'identifier') {
+    iterableName = iterableNode.text;
+  } else if (iterableNode?.type === 'call') {
+    const method = iterableNode.childForFieldName('method');
+    if (method) iterableName = method.text;
+  }
+  if (!iterableName) return;
 
   // Ruby has no extractFromTypeNode (no AST type annotations), pass a no-op.
   const noopExtractFromTypeNode = (): string | undefined => undefined;
@@ -369,6 +375,7 @@ const extractForLoopBinding: ForLoopExtractor = (
   const elementType = resolveIterableElementType(
     iterableName, node, scopeEnv, declarationTypeNodes, scope,
     noopExtractFromTypeNode, findRubyParamElementType,
+    undefined,
   );
   if (!elementType) return;
 

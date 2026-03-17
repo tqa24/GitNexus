@@ -915,6 +915,60 @@ describe('Kotlin unannotated for-loop type resolution (Tier 1c)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Kotlin when/is pattern binding: when (obj) { is User -> obj.save() }
+// ---------------------------------------------------------------------------
+
+describe('Kotlin when/is pattern binding', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'kotlin-when-pattern'),
+      () => {},
+    );
+  }, 60000);
+
+  it('detects User and Repo classes, both with save functions', () => {
+    expect(getNodesByLabel(result, 'Class')).toContain('User');
+    expect(getNodesByLabel(result, 'Class')).toContain('Repo');
+    const saveFns = getNodesByLabel(result, 'Function').filter(f => f === 'save');
+    expect(saveFns.length).toBe(2);
+  });
+
+  it('resolves obj.save() in when/is User arm to models/User.kt', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processAny' && c.targetFilePath === 'models/User.kt',
+    );
+    expect(userSave).toBeDefined();
+  });
+
+  it('resolves obj.save() in when/is Repo arm to models/Repo.kt', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const repoSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processAny' && c.targetFilePath === 'models/Repo.kt',
+    );
+    expect(repoSave).toBeDefined();
+  });
+
+  it('resolves obj.save() in handleUser when/is User arm to models/User.kt', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userSave = calls.find(c =>
+      c.target === 'save' && c.source === 'handleUser' && c.targetFilePath === 'models/User.kt',
+    );
+    expect(userSave).toBeDefined();
+  });
+
+  it('does NOT cross-resolve handleUser when/is User to Repo.save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wrongSave = calls.find(c =>
+      c.target === 'save' && c.source === 'handleUser' && c.targetFilePath === 'models/Repo.kt',
+    );
+    expect(wrongSave).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Kotlin HashMap .values navigation_expression resolution
 // ---------------------------------------------------------------------------
 

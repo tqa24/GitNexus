@@ -307,8 +307,14 @@ const extractForLoopBinding: ForLoopExtractor = (
 
   // The iterable is the `right` field of the range_clause.
   const rightNode = rangeClause.childForFieldName('right');
-  if (!rightNode || rightNode.type !== 'identifier') return;
-  const iterableName = rightNode.text;
+  let iterableName: string | undefined;
+  if (rightNode?.type === 'identifier') {
+    iterableName = rightNode.text;
+  } else if (rightNode?.type === 'selector_expression') {
+    const field = rightNode.childForFieldName('field');
+    if (field) iterableName = field.text;
+  }
+  if (!iterableName) return;
 
   const containerTypeName = scopeEnv.get(iterableName);
   const typeArgPos = methodToTypeArgPosition(undefined, containerTypeName);
